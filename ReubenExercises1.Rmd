@@ -1,0 +1,421 @@
+---
+output: word_document
+---
+
+##Exploratory Analysis
+
+```{r message=FALSE}
+library(ggplot2)
+georgia=read.csv("https://raw.githubusercontent.com/jgscott/STA380/master/data/georgia2000.csv",header=TRUE)
+
+
+```
+
+Total undercount and undercount percentage are calculated by subtracting votes from ballots.
+```{r}
+undercount=georgia$ballots-georgia$votes
+undercountpct=((georgia$ballots-georgia$votes)/georgia$ballots)*100
+
+```
+
+In order to evaluate whether or not a specific type of voting equipment experienced higher rates of undercount a boxplot showing the percentage undercount for each equipment type is presented below. While the optical voting type has a number of outliers representing counties with high undercount rates, overall none of the equipment types had a significantly higher undercount rate than other equipment types. 
+```{r}
+boxplot(undercountpct~georgia$equip,main="Undercount Percentage by Voting Equipment",xlab="Equipment", ylab="Percentage Under Count")
+
+```
+
+
+The boxplot below shows undercount rate in poor vs. non poor counties with 0 being non-poor and one being poor. This clearly shows that poor counties experienced a higher rate of undercount than non-poor counties. 
+```{r}
+boxplot(undercountpct~georgia$poor,main="Undercount Percentage in Poor vs Non-Poor Counties",xlab="Poor", ylab="Percentage Under Count")
+```
+
+The graph below shows the undercount rate compared to the percentage african american for each county. The demonstrates that there is no clear association between the african american population of a county and the undercount rate of that county. 
+```{r}
+qplot(georgia$perAA, undercountpct)
+
+```
+
+As can be seen below non-urban counties experienced higher rates of undercount than their urban counterparts. 
+```{r}
+boxplot(undercountpct~georgia$urban,main="Undercount Percentage in Urban vs Non-Urban Counties",xlab="urban", ylab="Percentage Under Count")
+```
+
+While all voting equipment types experienced relatively similar undercount rates, based on the plots above it appears that poor and rural areas experienced greater undercount than the wealthier urban counties. 
+
+#Bootstrapping
+```{r message=FALSE}
+library(mosaic)
+library(fImport)
+library(foreach)
+set.seed(1364)
+```
+
+The portfolio is set as being made up of the five ETFs and the dates from which returns will be pulled from are set. 
+```{r}
+mystocks = c("SPY","TLT","LQD","EEM","VNQ")
+myprices = yahooSeries(mystocks, from='2010-01-01', to='2015-07-30')
+```
+
+The returns for the five stocks listed above are pulled from yahoo finance and stored as myreturns.
+```{r}
+YahooPricesToReturns = function(series) {
+  mycols = grep('Adj.Close', colnames(series))
+  closingprice = series[,mycols]
+  N = nrow(closingprice)
+  percentreturn = as.data.frame(closingprice[2:N,]) / as.data.frame(closingprice[1:(N-1),]) - 1
+  mynames = strsplit(colnames(percentreturn), '.', fixed=TRUE)
+  mynames = lapply(mynames, function(x) return(paste0(x[1], ".PctReturn")))
+  colnames(percentreturn) = mynames
+  as.matrix(na.omit(percentreturn))
+}
+
+myreturns = YahooPricesToReturns(myprices)
+```
+
+##Risk Analysis
+In order to asses the riskiness of each ETF two different measures will be analysed. The first being the standard deviations of the ETF's returns. These standard deviations can be seen below. The smaller the standard deviation, the smaller risk associated with the ETF. According to this measure the LQD is the least risky ETF while the EEM is the riskiest.
+```{r}
+mr=as.data.frame(myreturns)
+sapply(mr,sd)
+
+```
+
+A second measure of an ETF's risk is the beta of that ETF. The beta compares how an equity performs compared to a benchmark. In this case the SPY ETF is used as a benchmark since it is designed to act like the S&P 500 which is a good summary of how the market as a whole is doing. The beta is calaculated by regressing each ETF against SPY. The resulting coeficient is the beta. If a beta is greater than one it is riskier than the SPY and if it is less than one it is less risky than SPY. The beta of SPY is one.
+```{r}
+lm_TLT = lm(myreturns[,2] ~ myreturns[,1])
+lm_LQD = lm(myreturns[,3] ~ myreturns[,1])
+lm_EEM = lm(myreturns[,4] ~ myreturns[,1])
+lm_VNQ = lm(myreturns[,5] ~ myreturns[,1])
+
+
+coef(lm_TLT); coef(lm_LQD); coef(lm_EEM);coef(lm_VNQ)
+
+```
+
+##Evenly Split Portfolio
+
+The first portfolio to be analyzed consists of an equal proportion of each ETF. Using the bootstrap method the returns of this portfolio are calculated for a 20 trading day period 5000 times. 
+```{r}
+set.seed(1364)
+n_days=20
+
+sim1 = foreach(i=1:5000, .combine='rbind') %do% {
+  totalwealth = 100000
+  weights = c(0.2, 0.2, 0.2, 0.2, 0.2)
+  holdings = weights * totalwealth
+  wealthtracker = rep(0, n_days) # Set up a placeholder to track total wealth
+  for(today in 1:n_days) {
+    return.today = resample(myreturns, 1, orig.ids=FALSE)
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    wealthtracker[today] = totalwealth
+    holdings=totalwealth*weights #rebalances portfolio
+  }
+  wealthtracker
+}
+
+```
+
+The histogram below presents the end values of the portfolio for each simulation in the bootstrap. 
+```{r}
+hist(sim1[,20], 25)
+```
+
+Below illustrates the distribution of the profits for each simulation. The distribution is roughly normal with a center around zero. The range is approximately -10,000 to 12,500
+```{r}
+hist(sim1[,n_days]- 100000)
+```
+
+The number below represents the value at risk for the evenly distributed portfolio. This number means that the portfolio will lose less than 3,890.10 95% of the time. 
+```{r}
+quantile(sim1[,20], 0.05) - 100000
+
+```
+
+
+
+##Safe Portfolio
+The safe portfolio consists of 25% SPY, 50% TLT and 25% LQD. According to both the standard deviations of returns for the funds as well as their betas these are the three least risky of the funds. A bootstrap of 5000 simulations of 20 trading days is performed. 
+```{r}
+set.seed(1364)
+n_days=20
+
+sim2 = foreach(i=1:5000, .combine='rbind') %do% {
+  totalwealth = 100000
+  weights = c(0.25,0.5,0.25, 0.0, 0.0)
+  holdings = weights * totalwealth
+  wealthtracker = rep(0, n_days) # Set up a placeholder to track total wealth
+  for(today in 1:n_days) {
+    return.today = resample(myreturns, 1, orig.ids=FALSE)
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    wealthtracker[today] = totalwealth
+    holdings=totalwealth*weights #rebalances portfolio
+  }
+  wealthtracker
+}
+
+
+
+```
+
+Below is a histogram representing the ending value of the 5000 simulation portfolios. The safe portfolio has a smaller range in ending values than the even split portfolio which is expected. 
+```{r}
+hist(sim2[,20], 25)
+
+```
+
+The distribution of profits from the 5000 simulations shows that the vast majority of portfolios had profits between -5,000 and 5,000
+```{r}
+hist(sim2[,20]- 100000)
+```
+
+Since the portfolio is less risky it has a VAR closer to zero than the evenly split portfolio.
+```{r}
+quantile(sim2[,20], 0.05) - 100000
+
+```
+
+
+##Risky Portfolio
+The risky portfolio consists of 10% SPY, 60% EEM and 30% VNQ. This portfolio consists of the three riskiest funds of the original five with the two riskiest being heavily weighted. A bootstrap of 5,000 simulations of 20 day trading periods is performed. 
+```{r}
+set.seed(1364)
+n_days=20
+
+sim3 = foreach(i=1:5000, .combine='rbind') %do% {
+  totalwealth = 100000
+  weights = c(0.1,0.0,0.0, 0.6, 0.3)
+  holdings = weights * totalwealth
+  wealthtracker = rep(0, n_days) # Set up a placeholder to track total wealth
+  for(today in 1:n_days) {
+    return.today = resample(myreturns, 1, orig.ids=FALSE)
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    wealthtracker[today] = totalwealth
+    holdings=totalwealth*weights #rebalances portfolio
+  }
+  wealthtracker
+}
+
+```
+
+As expected the risky portfolio has the largest range of ending values of the three portfolios. Since it consists of the riskiest assets there is a greater chance of losing larger amounts of value, but also a greater chance of gaining larger amounts of value.
+```{r}
+hist(sim3[,20], 25)
+
+```
+
+The distribution below shows that most portfolios in the bootstrap had a profits between -20,000 and 20,000.
+```{r}
+hist(sim3[,20]- 100000)
+
+```
+
+The value at risk of this portfolio is the lowest as expected. 
+```{r}
+quantile(sim3[,20], 0.05) - 100000
+
+```
+
+
+
+#Clustering and PCA
+```{r}
+library(ggplot2)
+wine=read.csv("https://raw.githubusercontent.com/jgscott/STA380/master/data/wine.csv",header=TRUE)
+
+
+
+```
+
+A new data set is created including all attributes from the original wine data set excluding the color and quality columns. 
+```{r}
+wine_chem=wine[,c(1:11)]
+wine_chem = scale(wine_chem, center=TRUE, scale=TRUE)
+```
+
+##K-means clustering
+The k-means clustering method is used to test whether or not the method can accurately distinguish between red and white wines. 2 clusters will be created since there are two possible color options for each wine. 
+```{r}
+set.seed(1364)
+cluster1=kmeans(wine_chem, centers=2, nstart=50)
+```
+
+The plot below displays the accuracy of the k-means clustering process in differentiating between red and white wines. Each bar represents one of the wine colors while the colors within the bar represent which cluster those wines were placed in by k means. The graph demonstrates that cluster one consists of mostly red wine with a small number of white wines and cluster 2 consists of mostly white wines with a very small number of reds. 
+```{r}
+
+qplot(color,fill=factor(cluster1$cluster),data=wine)
+
+```
+
+The tables below present the same data from the graph above in numerical form. The first table shows includes the counts for each cluster and color while the second presents this information is percentage form. For both red and white wines the k means clustering method categorized over 98% of the wines with other wines of the same color. 
+```{r}
+t1=xtabs(~wine$color+cluster1$cluster)
+t1
+p1=prop.table(t1,margin=1)
+p1
+
+```
+
+##PCA
+Principal component analysis is performed to determine whether or not it can accurately predict the color of a wine. 
+```{r}
+set.seed(1364)
+pca=prcomp(wine_chem)
+loadings = pca$rotation
+scores = pca$x
+
+```
+
+This first plot illustrates how accurate one principal component is in predicting the color of a wine. The graph shows that the first principal component accurately groups most wines with other wines of the same colors, but some wines are miscategorized. 
+```{r}
+qplot(scores[,1], fill=wine$color, xlab='Component 1')
+
+```
+
+Below is a plot demonstrating how well the first two principal components categorize wines into colors. While the second principal component improves accuracy over just using the first principal component there are still some wines miscategorized.  
+```{r}
+qplot(scores[,1], scores[,2], color=wine$color, xlab='Component 1', ylab='Component 2')
+
+```
+
+This graph shows how increasing the number of principal components used increases the accuracy of categorizing wine by color. For PCA to be as accurate as k means clustering a high number of principal components must be used. 
+```{r}
+plot(pca)
+
+```
+
+
+
+## K-Means Clustering for quality
+
+Since the K-means clustering method was more effective than principal component analysis is categorizing wine by color, the same method will be used to test whether or not it can successfully cluster by wine quality. An initial k means is performed using 10 clusters. 
+```{r warning=FALSE}
+set.seed(1364)
+cluster2=kmeans(wine_chem, centers=10, nstart=50)
+
+
+
+
+```
+
+The plot below illustrates that k means clustering was not effective in accurately categorizing the wines by quality. Clusters consisted of wines of a varying quality.
+```{r}
+qplot(quality,fill=factor(cluster2$cluster),data=wine)
+
+```
+
+These table numerically demonstrate the failure of the k means process to categorize wine by quality. 
+```{r}
+t2=xtabs(~wine$quality+cluster2$cluster)
+t2
+p2=prop.table(t1,margin=1)
+p2
+```
+
+A second k means test is performed in order to test whether or not decreasing the number of clusters increases the accuracy of the model. Ideally one cluster representing low quality wines while the other cluster represents higher quality wines.
+```{r warning=FALSE}
+set.seed(1364)
+cluster3=kmeans(wine_chem, centers=2, nstart=50)
+
+
+```
+
+The plot below illustrates that decreasing the number of clusters to two does not increase the accuracy of the k means process. 
+```{r}
+qplot(quality,fill=factor(cluster3$cluster),data=wine)
+
+```
+
+While the k-means clustering process accurately categorizes wines by color, it does not accruately categorize wine by quality. 
+
+#Market Segmentation
+```{r}
+library(ggplot2)
+tweets=read.csv("https://raw.githubusercontent.com/jgscott/STA380/master/data/social_marketing.csv",header=TRUE)
+```
+
+In order to get a better understanding of the market segments represented in the NutrientH20's twitter data I have performed a k means cluster analysis of the data. To begin the identifier column is removed from the data and the data is scaled.
+```{r}
+scaledtweets=tweets[,c(2:37)]
+scaledtweets=scale(scaledtweets, center=TRUE, scale=TRUE)
+
+
+```
+
+Once the data has been scaled K-means clustering is used to find different classes within the data. In order to get a broad view of the possible market segmentations included in the data 20 clusters are formed. The centers of the clusters can be seen below.
+```{r warning=FALSE}
+set.seed(1364)
+cluster=kmeans(scaledtweets, centers=20, nstart=50)
+centers=cluster$centers
+centers
+
+```
+
+Now that clusters and their centers have been found, the information provided from the centers can be used to identify possible classes or segments of interest for NutrientH20. In order to identify these segments any cluster with a center more than 2 standard deviations greater than the mean of a certain category will be considered a segment with a significant interest in that category. One segment of twitter users that should be of interest to the brand is the bot segment. This segment can easily be identified as the class below. While all other classes are below average in the Spam category this class is over 12 standard deviations above the mean. This class also has a significant number of tweets in the adult category. There are 182 twitter users in this class.
+```{r}
+
+centers[19,]
+
+
+```
+Twitter users in class:`r length(which(cluster$cluster == 10))`
+
+
+A second class that is likely comprised of bots is presented below. This class represents users that tweet often about adult subjects, but no other subject. 
+```{r}
+centers[5,]
+
+```
+Twitter users in class:`r length(which(cluster$cluster == 5))`
+
+Now that classes of users associated with twitter bots have been identified we can begin to examine clusters of twitter users that represent possible market segments of interest to NutrientH20.This will also reveal what interests are possibly related to eachother. The cluster presented below represents a market segment whose tweets are often categorized as being about religion, family, parenting, school, food and sports fandom. Based on these interests one possible assumption is that this cluster of users consists of parents with school aged children.
+```{r}
+centers[15,]
+```
+Twitter users in class:`r length(which(cluster$cluster == 15))`
+
+Another possible market segment of interest is presented below. This cluster represents users that have expressed interest in personal fitness, the outdoors and health. This cluster presents a particularly cohesive segment that could be used in particular marketing campaigns by NutrientH20.
+```{r}
+centers[6,]
+```
+Twitter users in class:`r length(which(cluster$cluster == 6))`
+
+A third cluster representing a possible market segment is below. It contains users that have tweeted about college/university, online gaming and playing sports. Based on this information it is possible that this cluster is comprised of college aged males, a valuable demographic for marketers. 
+```{r}
+centers[14,]
+```
+Twitter users in class:`r length(which(cluster$cluster == 14))`
+
+The following cluster represents users that tweeted about college/university and online gaming like the previous segment discussed. However, this segment did not exhibit a significant level of tweeting the online gaming category.
+```{r}
+centers[18,]
+```
+Twitter users in class:`r length(which(cluster$cluster == 18))`
+
+The cluster below includes users with tweets in the chatter, photo sharing and shopping categories. While the chatter category could be hard to interpret, the other two categories associated with this cluster present a cohesive representation of this market segment. 
+```{r}
+
+centers[17,]
+
+```
+Twitter users in class:`r length(which(cluster$cluster == 17))`
+
+A cluster representing a segment with similar interests as the one discussed above can be seen below. This segment tweeted significantly about fashion, beauty, cooking and photo sharing. 
+```{r}
+centers[16,]
+
+```
+Twitter users in class:`r length(which(cluster$cluster == 16))`
+
+A final cluster of possible interest for NutrientH20 is presented below. This possible market segment includes users that tweet significantly about tv, film and art. This segment may represent individuals with an interest in culture. 
+```{r}
+centers[13,]
+```
+Twitter users in class:`r length(which(cluster$cluster == 13))`
+
+
+Through k-means clustering a number of diverse market segments have been identified. With this information NutrientH20 can get a better idea of who there customers are and how they can spend their marketing dollars more effectively. 
+
