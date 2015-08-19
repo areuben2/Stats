@@ -1,0 +1,275 @@
+---
+output: word_document
+---
+#Exercises 2
+#Andrew Reuben
+
+#Problem 1
+```{r message=FALSE}
+airport=read.csv("https://raw.githubusercontent.com/jgscott/STA380/master/data/ABIA.csv")
+library(ggplot2)
+attach(airport)
+```
+
+
+I have chosen to look at the seasonality of cancellations. While it may seem like cancellations are unavoidable, passengers may benefit from knowing when cancellations occur most. To get the broadest sense of when cancellations occur cancellations by month is graphed below.  
+```{r}
+month=airport[c(2,22)]
+monthdelay=tapply(airport$Cancelled, airport$Month, sum)
+months=levels(factor(airport$Month))
+
+cut=factor(levels(airport$month), levels = levels(airport$month))
+
+qplot(months,monthdelay,geom="bar", stat="identity",xlab="Month", ylab="Cancellations")+scale_x_discrete(limits=c(1,2,3,4,5,6,7,8,9,10,11,12))+ggtitle("Flight Cancellations By Month")
+
+
+```
+
+
+It may also be helpful to look at how cancellations vary between times of the month. 
+```{r}
+domdelay=tapply(airport$Cancelled, airport$DayofMonth, sum)
+dom=levels(factor(airport$DayofMonth))
+
+
+
+qplot(dom,domdelay,geom="bar", stat="identity",xlab="Day of Month", ylab="Cancellations")+scale_x_discrete(limits=c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31))+ggtitle("Flight Cancellations By Day of The Month")
+```
+
+Finally, cancellations by day of the week can be seen below. 
+```{r}
+dowdelay=tapply(airport$Cancelled, airport$DayOfWeek, sum)
+dow=levels(factor(airport$DayOfWeek))
+
+
+
+qplot(dow,dowdelay,geom="bar", stat="identity",xlab="Day of Week", ylab="Cancellations")+scale_x_discrete(limits=c(1,2,3,4,5,6,7))+ggtitle("Flight Cancellations By Day of The Week")
+
+```
+
+
+#Problem 2
+
+The libraries neccesary to analyze the corpus, as well as the readerPlain function, are loaded.
+```{r message=FALSE}
+library(tm)
+library(randomForest)
+library(e1071)
+library(rpart)
+library(ggplot2)
+library(caret)
+library(plyr)
+
+readerPlain = function(fname){
+  readPlain(elem=list(content=readLines(fname)), id=fname, language='en') }
+
+```
+
+The file names in the corpus are placed in the file list and the author for each article is placed in the train labels list.
+```{r}
+
+author_dirs = Sys.glob('./ReutersC50/C50train/*')
+file_list = NULL
+train_labels = NULL
+for(author in author_dirs) {
+  author_name = substring(author, first=23)
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  file_list = append(file_list, files_to_add)
+  train_labels = append(train_labels, rep(author_name, length(files_to_add)))
+}
+
+```
+
+File names are cleaned in a way that removes the .txt from the end of the filename.
+```{r}
+all_docs = lapply(file_list, readerPlain) 
+names(all_docs) = file_list
+names(all_docs) = sub('.txt', '', names(all_docs))
+```
+
+Initializing training corpus.
+```{r}
+train_corpus = Corpus(VectorSource(all_docs))
+#names(train_corpus) = file_list ***This may have to be put back in
+
+```
+
+The articles are tokenized and stemmed. This process includes making all characters lower case and removing numbers, punctuation, whitespace and all stopwords included in the SMART library. The tokenization process makes the articles easier to analyze by making the articles easier to work with and removing words that are not meaningful. 
+```{r}
+library(SnowballC)
+train_corpus = tm_map(train_corpus, content_transformer(tolower)) 
+train_corpus = tm_map(train_corpus, content_transformer(removeNumbers)) 
+train_corpus = tm_map(train_corpus, content_transformer(removePunctuation)) 
+train_corpus = tm_map(train_corpus, content_transformer(stripWhitespace)) 
+train_corpus = tm_map(train_corpus, content_transformer(removeWords), stopwords("SMART"))
+train_corpus=tm_map(train_corpus, stemDocument)
+```
+
+A document term matrix is made using the tokenized and stemmed training corpus. During this process a sparsity level of 99% is used. This means that only words that are used in more than one percent of the documents will be used. This removes words that may add noise to the model, but isn't such a low sparsity level that terms that could be used in identifying an author are removed. 
+```{r}
+DTM_train = DocumentTermMatrix(train_corpus)
+DTM_train = removeSparseTerms(DTM_train, 0.99)
+
+```
+
+The train DTM is transformed into a data frame to be used during Naive Bayes.
+
+```{r results="hide"}
+DTM_traindf = as.data.frame(inspect(DTM_train))
+
+```
+
+
+A test matrix is made using the same parameters as the training matrix.
+```{r}
+
+author_dirs = Sys.glob('./ReutersC50/C50test/*')
+file_list = NULL
+test_labels = NULL
+for(author in author_dirs) {
+  author_name = substring(author, first=22)
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  file_list = append(file_list, files_to_add)
+  test_labels = append(test_labels, rep(author_name, length(files_to_add)))
+}
+
+
+```
+
+Test_corpus initialized.
+```{r}
+test_corpus = Corpus(VectorSource(all_docs))
+
+```
+
+Tokenization and stemming.
+```{r}
+library(SnowballC)
+test_corpus = tm_map(test_corpus, content_transformer(tolower)) 
+test_corpus = tm_map(test_corpus, content_transformer(removeNumbers)) 
+test_corpus = tm_map(test_corpus, content_transformer(removePunctuation)) 
+test_corpus = tm_map(test_corpus, content_transformer(stripWhitespace)) 
+test_corpus = tm_map(test_corpus, content_transformer(removeWords), stopwords("SMART"))
+test_corpus=tm_map(test_corpus, stemDocument)
+
+```
+
+Create Document Term Matrix
+```{r}
+DTM_test = DocumentTermMatrix(test_corpus)
+DTM_test = removeSparseTerms(DTM_test, 0.99)
+
+
+```
+
+Find all words used in the training data matrix. Only these words will be used when performing Naive Bayes. This will give more accurate results. 
+```{r}
+train_dict = NULL
+train_dict = dimnames(DTM_train)[[2]]
+
+```
+
+Test data matrix is made and sparse terms are removed at the same level as the training data matrix.
+```{r}
+DTM_test = DocumentTermMatrix(test_corpus, list(dictionary=train_dict))
+DTM_test = removeSparseTerms(DTM_test, 0.99)
+```
+
+A data frame is formed using the test DTM.
+
+```{r results="hide"}
+DTM_testdf = as.data.frame(inspect(DTM_test))
+
+```
+
+A Naive Bayes model is made using the training data matrix and labels. 
+```{r}
+factorlabels=as.factor(train_labels)
+model_NB = naiveBayes(x=DTM_traindf, y=as.factor(train_labels), laplace=1)
+
+```
+
+The Naive Bayes model is fit to the test matrix and used to predict the author of each article in the test matrix.
+```{r}
+pred_NB = predict(model_NB, DTM_testdf)
+```
+
+A confusion Matrix is formed to show how accurate the Naive Bayes model was in prediction the authors of the articles in the test matrix. The overall accuracy of the model was 67.41%.
+```{r}
+conf_NB = confusionMatrix(table(pred_NB,test_labels))
+conf_NB_df = as.data.frame(conf_NB$byClass)
+accmean=colMeans(conf_NB_df)[8]
+
+accmean
+```
+
+However, the model did not perform uniformly well on all authors. The table below displays the accuracy for each author in the corpus. This shows that the model was very succesful in predicting some other, but not as well at predicting others. The model was able to predict the author of articles by Tim Farrand, Kourosh Karimkhany, Lynne O'Donnell, Jo Winterbottom, JimGilchrist, Fumiko Fujisaki, David Lawder and Alan Crosby at rates higher than 90%. On the other hand articles by Jane Macartney, William Kazer, Tane Eelyn, Scott Hillis, Sarah Davison, Mure Dickie and Kirstin Ridley were only predicted correctly half the time. It is likely that these low performing classes likely include articles with words that are not distinct resulting in misclassifications. 
+```{r}
+accuracy_by_author=conf_NB_df[8]
+accuracy_by_author
+
+```
+
+
+
+After exploring a number of different possible models, I settled on the random forest model.
+```{r}
+set.seed(34)
+model_RF = randomForest(x=DTM_traindf, y=as.factor(train_labels), mtry=4, ntree=200)
+pred_RF = predict(model_RF, data=DTM_test)
+```
+
+Overall, the random forest model performed almost identically well as the Naive Bayes model with an accuracy score of 72%.
+```{r}
+conf_RF = confusionMatrix(table(pred_RF,test_labels))
+conf_RF$overall[1]
+```
+
+There was also variability between authors in terms of accuracy with the random forest model. However, this variability varied to a much greater extent than the Naive Bayes model. This could be a result of the random variability associated with how the random forest model works. Some splits may use accurate predictors, while others may use less accurate predictors. The varied levels of accuracy between authors can be seen below. 
+```{r}
+Accuracy_Author = as.data.frame(conf_RF$byClass)[1]
+Accuracy_Author
+
+```
+
+
+#Problem 3
+
+Data is imported as list.
+```{r message=FALSE}
+library(arules)
+fc <- file("https://raw.githubusercontent.com/jgscott/STA380/master/data/groceries.txt")
+groceries <- strsplit(readLines(fc), ",")
+close(fc)
+
+```
+
+Duplicates are dropped
+```{r}
+groceries <- lapply(groceries, unique)
+
+
+```
+
+The list is split into transactions.
+```{r}
+groctrans <- as(groceries, "transactions")
+
+```
+
+Apriori algorithm is run in order to develop rules. While running the apriori algorithm with different levels of support and confidence, a common theme emerged. The most common item to be associated with the rules being developed was far and away whole milk. The only other item that appeared with any regularity was other vegetables. This reveals that whole milk, and to a lesser extent other vegetables, are purchased by a wide variety of shoppers. 
+```{r}
+grocrules <- apriori(groctrans, 
+	parameter=list(support=.01, confidence=.5, maxlen=5))
+inspect(grocrules)
+```
+
+While most support and confidence levels revealed whole milk to be popular among shoppers, one other interesting rule was discoverd with a support level of .001 and a confidence level of .8. As can be seen below, shoppers who buy liquor and red/blush wine also buy bottle beer. At a confidence of .9048 this is a very strong rules. This confidence level means that 90% of shoppers that bought liquor and red/blush wine also purchased beer. 
+```{r}
+
+grocrulesbeer <- apriori(groctrans, 
+	parameter=list(support=.001, confidence=.8, maxlen=4))
+
+inspect(head(grocrulesbeer))
+```
+
